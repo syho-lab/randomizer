@@ -108,7 +108,7 @@ def start_choice_mode(message):
 @bot.message_handler(func=lambda message: message.text == '🎲 Режим ответа')
 def start_answer_mode(message):
     user_id = message.from_user.id
-    user_data[user_id] = {'mode': 'answer_waiting_question'}
+    user_data[user_id] = {'mode': 'answer_choose_style'}
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     btn1 = types.InlineKeyboardButton('🔮 Мистический', callback_data='style_mystic')
@@ -120,7 +120,7 @@ def start_answer_mode(message):
     bot.send_message(
         message.chat.id,
         "🎲 *Режим ответа активирован!*\n\n"
-        "Задай мне любой вопрос, а затем выбери стиль ответа:\n\n"
+        "Сначала выбери стиль ответа, а затем задай свой вопрос:\n\n"
         "🔮 *Мистический* - таинственные ответы\n"
         "📊 *Простой* - прямые ответы\n"
         "😄 *Шуточный* - веселые ответы\n"
@@ -219,10 +219,15 @@ def handle_inline_buttons(call):
     
     elif call.data.startswith('style_'):
         style = call.data.split('_')[1]
-        user_data[user_id]['selected_style'] = style
         
         if style == 'random':
             style = random.choice(['mystic', 'simple', 'funny'])
+        
+        # Сохраняем выбранный стиль и переводим в режим ожидания вопроса
+        user_data[user_id] = {
+            'mode': 'answer_waiting_question',
+            'selected_style': style
+        }
         
         style_names = {
             'mystic': '🔮 Мистический',
@@ -230,11 +235,11 @@ def handle_inline_buttons(call):
             'funny': '😄 Шуточный'
         }
         
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text=f"✅ Выбран стиль: *{style_names[style]}*\n\n"
-                 "Теперь задай мне свой вопрос!",
+        bot.send_message(
+            chat_id,
+            f"✅ Выбран стиль: *{style_names[style]}*\n\n"
+            "Теперь задай мне свой вопрос! Я готов на него ответить! 💫",
+            reply_markup=back_button(),
             parse_mode='Markdown'
         )
 
@@ -256,6 +261,44 @@ def handle_edit_mode(message):
     del user_state['editing_option']
     
     show_confirmation(message.chat.id, user_state['options'])
+
+# Обработка вопросов в режиме ответа
+@bot.message_handler(func=lambda message: 
+                    message.from_user.id in user_data and 
+                    user_data[message.from_user.id].get('mode') == 'answer_waiting_question')
+def handle_question(message):
+    user_id = message.from_user.id
+    user_state = user_data[user_id]
+    
+    if 'selected_style' in user_state:
+        style = user_state['selected_style']
+        
+        if style == 'mystic':
+            answer = random.choice(answers_mystic)
+        elif style == 'simple':
+            answer = random.choice(answers_simple)
+        elif style == 'funny':
+            answer = random.choice(answers_funny)
+        else:
+            answer = random.choice(answers_simple)
+        
+        # Отправляем ответ
+        bot.send_message(
+            message.chat.id,
+            f"❓ *Твой вопрос:* {message.text}\n\n"
+            f"💫 *Мой ответ:* {answer}",
+            reply_markup=main_menu(),
+            parse_mode='Markdown'
+        )
+        
+        # Сбрасываем режим
+        user_data[user_id] = {'mode': 'main'}
+    else:
+        bot.send_message(
+            message.chat.id,
+            "⚠️ Что-то пошло не так. Давай начнем заново!",
+            reply_markup=main_menu()
+        )
 
 # Красивый выбор варианта
 def choose_with_style(chat_id, options, chosen_option, message_id):
@@ -308,55 +351,23 @@ def handle_any_message(message):
     
     # Пропускаем сообщения, которые уже обрабатываются другими хендлерами
     if (user_id in user_data and 
-        user_data[user_id].get('mode') in ['choice', 'editing', 'answer_waiting_question']):
+        user_data[user_id].get('mode') in ['choice', 'editing', 'answer_waiting_question', 'answer_choose_style']):
         return
     
-    # Если пользователь в режиме ожидания вопроса для ответа
-    if user_id in user_data and user_data[user_id].get('mode') == 'answer_waiting_question':
-        if 'selected_style' in user_data[user_id]:
-            style = user_data[user_id]['selected_style']
-            
-            if style == 'mystic':
-                answer = random.choice(answers_mystic)
-            elif style == 'simple':
-                answer = random.choice(answers_simple)
-            elif style == 'funny':
-                answer = random.choice(answers_funny)
-            else:
-                answer = random.choice(answers_simple)
-            
-            # Сбрасываем режим
-            user_data[user_id] = {'mode': 'main'}
-            
-            bot.send_message(
-                message.chat.id,
-                f"❓ *Твой вопрос:* {message.text}\n\n"
-                f"💫 *Мой ответ:* {answer}",
-                reply_markup=main_menu(),
-                parse_mode='Markdown'
-            )
-        else:
-            bot.send_message(
-                message.chat.id,
-                "⚠️ Сначала выбери стиль ответа из кнопок выше!",
-                reply_markup=back_button()
-            )
-    
     # Если пользователь просто написал сообщение (не в режиме)
-    else:
-        responses = [
-            "Интересно! Хочешь задать вопрос или выбрать между вариантами?",
-            "Хм... Используй кнопки ниже для выбора режима!",
-            "Класс! Выбери, чем я могу тебе помочь 👇",
-            "Отлично! Давай воспользуемся одним из моих режимов!",
-            "Понял тебя! Выбери действие из меню ниже:"
-        ]
-        
-        bot.send_message(
-            message.chat.id,
-            f"{random.choice(responses)}",
-            reply_markup=main_menu()
-        )
+    responses = [
+        "Интересно! Хочешь задать вопрос или выбрать между вариантами?",
+        "Хм... Используй кнопки ниже для выбора режима!",
+        "Класс! Выбери, чем я могу тебе помочь 👇",
+        "Отлично! Давай воспользуемся одним из моих режимов!",
+        "Понял тебя! Выбери действие из меню ниже:"
+    ]
+    
+    bot.send_message(
+        message.chat.id,
+        f"{random.choice(responses)}",
+        reply_markup=main_menu()
+    )
 
 # ===== ДЛЯ RENDER =====
 app = flask.Flask(__name__)
