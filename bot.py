@@ -194,12 +194,18 @@ def handle_inline_buttons(call):
     
     if call.data.startswith('edit_'):
         option_num = int(call.data.split('_')[1])
-        user_data[user_id]['editing'] = option_num
+        user_data[user_id] = {
+            'mode': 'editing',
+            'editing_option': option_num,
+            'options': user_data[user_id]['options']
+        }
         
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text=f"✏️ Напиши новый текст для *{option_num}-го варианта*:",
+        bot.send_message(
+            chat_id,
+            f"✏️ *Режим редактирования*\n\n"
+            f"Текущий {option_num}-й вариант: *{user_data[user_id]['options'][option_num-1]}*\n\n"
+            f"Напиши новый текст для {option_num}-го варианта:",
+            reply_markup=back_button(),
             parse_mode='Markdown'
         )
     
@@ -232,23 +238,31 @@ def handle_inline_buttons(call):
             parse_mode='Markdown'
         )
 
-# Обработка редактирования вариантов
+# Обработка режима редактирования
 @bot.message_handler(func=lambda message: 
                     message.from_user.id in user_data and 
-                    'editing' in user_data[message.from_user.id])
-def handle_edit_option(message):
+                    user_data[message.from_user.id].get('mode') == 'editing')
+def handle_edit_mode(message):
     user_id = message.from_user.id
     user_state = user_data[user_id]
-    option_num = user_state['editing']
     
+    # Сохраняем новый вариант
+    option_num = user_state['editing_option']
     user_state['options'][option_num - 1] = message.text
-    del user_state['editing']
+    
+    # Возвращаемся к подтверждению
+    user_state['mode'] = 'choice'
+    user_state['step'] = 3
+    del user_state['editing_option']
     
     show_confirmation(message.chat.id, user_state['options'])
 
 # Красивый выбор варианта
 def choose_with_style(chat_id, options, chosen_option, message_id):
-    bot.delete_message(chat_id, message_id)
+    try:
+        bot.delete_message(chat_id, message_id)
+    except:
+        pass
     
     emojis = ["🎯", "⭐", "✨", "🎊", "🏆"]
     spinning_emojis = ["⏳", "⌛", "🔮", "🎲"]
@@ -292,6 +306,11 @@ def choose_with_style(chat_id, options, chosen_option, message_id):
 def handle_any_message(message):
     user_id = message.from_user.id
     
+    # Пропускаем сообщения, которые уже обрабатываются другими хендлерами
+    if (user_id in user_data and 
+        user_data[user_id].get('mode') in ['choice', 'editing', 'answer_waiting_question']):
+        return
+    
     # Если пользователь в режиме ожидания вопроса для ответа
     if user_id in user_data and user_data[user_id].get('mode') == 'answer_waiting_question':
         if 'selected_style' in user_data[user_id]:
@@ -324,7 +343,7 @@ def handle_any_message(message):
             )
     
     # Если пользователь просто написал сообщение (не в режиме)
-    elif user_id not in user_data or user_data[user_id].get('mode') == 'main':
+    else:
         responses = [
             "Интересно! Хочешь задать вопрос или выбрать между вариантами?",
             "Хм... Используй кнопки ниже для выбора режима!",
